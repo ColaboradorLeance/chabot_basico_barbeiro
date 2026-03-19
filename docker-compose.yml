@@ -1,0 +1,43 @@
+version: '3.3'
+
+services:
+  evolution-api:
+    image: atendai/evolution-api:v1.8.2
+    container_name: evolution_api
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_URL=http://localhost:8080
+      - AUTHENTICATION_TYPE=apikey
+      - AUTHENTICATION_API_KEY=1234
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://postgres:senha123@postgres:5432/evolution?schema=public
+      - WEBHOOK_GLOBAL_ENABLED=false
+    depends_on:
+      - postgres
+      - api  # 👈 IMPORTANTE
+
+  api:
+    build: ./api  # pasta do seu FastAPI
+    container_name: minha_api
+    restart: always
+    ports:
+      - "8000:8000"
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: evolution_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=senha123
+      - POSTGRES_DB=evolution
+    ports:
+      - "5432:5432"
+    volumes:
+      - evolution_db:/var/lib/postgresql/data
+
+volumes:
+  evolution_db:
