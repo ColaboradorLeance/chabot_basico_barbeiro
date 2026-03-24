@@ -1,43 +1,73 @@
-version: '3.3'
+version: '3.8'
 
 services:
-  evolution-api:
-    image: atendai/evolution-api:v1.8.2
-    container_name: evolution_api
-    restart: always
-    ports:
-      - "8080:8080"
-    environment:
-      - SERVER_URL=http://localhost:8080
-      - AUTHENTICATION_TYPE=apikey
-      - AUTHENTICATION_API_KEY=1234
-      - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://postgres:senha123@postgres:5432/evolution?schema=public
-      - WEBHOOK_GLOBAL_ENABLED=false
-    depends_on:
-      - postgres
-      - api  # 👈 IMPORTANTE
-
-  api:
-    build: ./api  # pasta do seu FastAPI
-    container_name: minha_api
-    restart: always
-    ports:
-      - "8000:8000"
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
-
   postgres:
     image: postgres:15-alpine
     container_name: evolution_postgres
     restart: always
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=senha123
-      - POSTGRES_DB=evolution
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: evolution
     ports:
       - "5432:5432"
     volumes:
       - evolution_db:/var/lib/postgresql/data
 
+  api:
+    build: ./api
+    container_name: minha_api
+    restart: always
+    ports:
+      - "8000:8000"
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./api:/app
+    working_dir: /app
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://postgres:senha123@postgres:5432/evolution
+
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.6
+    container_name: evolution_api
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      CONFIG_SESSION_PHONE_VERSION: 2.3000.1035745556
+      SERVER_URL: http://evolution-api:8080
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: 1234
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://postgres:senha123@postgres:5432/evolution?schema=public
+      WEBHOOK_GLOBAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_URL: http://api:8000/webhook
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      DATABASE_SAVE_MESSAGE_METADATA: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
+    depends_on:
+      - postgres
+      - api
+      - redis
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    command: >
+      redis-server --port 6379 --appendonly yes
+    volumes:
+      - redis:/data
+    ports:
+      - 6379:6379
+
 volumes:
   evolution_db:
+  redis:
