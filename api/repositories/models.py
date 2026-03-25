@@ -45,3 +45,37 @@ class ProcessedMessage(Base):
     id = Column(Integer, primary_key=True, index=True)
     message_id = Column(String, unique=True, index=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = Column(Integer, primary_key=True)
+    barber_id = Column(Integer, ForeignKey("barbers.id"))
+    data = Column(String)
+    hora = Column(String)
+    servico = Column(String)
+    cliente_phone = Column(String)  # Certifique-se que este nome é o usado nos filtros
+
+    # Dica: Adicione o relacionamento para facilitar buscas futuras
+    barber = relationship("Barber", backref="appointments")
+
+class Barber(Base):
+    __tablename__ = "barbers"
+
+    id = Column(Integer, primary_key=True)
+    nome = Column(String)
+
+    schedules = relationship("Schedule", back_populates="barber")
+
+
+class Schedule(Base):
+    __tablename__ = "schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    barber_id = Column(Integer, ForeignKey("barbers.id"))
+    day = Column(String, nullable=False)       # ex: "2026-03-25"
+    time_slot = Column(String, nullable=False) # ex: "08:00", "08:30", "09:00"
+    is_booked = Column(Integer, default=0)     # 0 = disponível, 1 = reservado
+
+    barber = relationship("Barber", back_populates="schedules")

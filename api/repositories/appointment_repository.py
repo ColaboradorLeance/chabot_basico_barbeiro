@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from .database import SessionLocal
-from .models import User, Conversation, ConversationData, ProcessedMessage
+from .models import User, Conversation, ConversationData, ProcessedMessage, Appointment, Barber
 
 class AppointmentRepository:
     def __init__(self):
@@ -86,3 +86,45 @@ class AppointmentRepository:
             print(f"⚠️ Erro ao salvar message_id (provável duplicado): {message_id}")
         finally:
             self.db.close()
+
+    def _refresh_session(self):
+        if not self.db.is_active:
+            self.db = SessionLocal()
+
+    def get_appointments(self, phone: str):
+        try:
+            # Correção: O modelo Appointment usa cliente_phone, não user_id
+            agendamentos = self.db.query(Appointment).filter(
+                Appointment.cliente_phone == phone
+            ).order_by(Appointment.data, Appointment.hora).all()
+            return agendamentos
+        finally:
+            self.db.close()
+
+    def has_available_slots(self, day: str) -> bool:
+        try:
+            all_slots = [f"{h:02d}:00" for h in range(8, 19)]
+            barbeiros = self.db.query(Barber).all()
+
+            print(f"DEBUG: Barbeiros encontrados no banco: {len(barbeiros)}")  # Adicione isso
+
+            if not barbeiros:
+                return False
+
+            for barber in barbeiros:
+                ocupados = self.db.query(Appointment).filter(
+                    Appointment.barber_id == barber.id,
+                    Appointment.data == day
+                ).all()
+                ocupados_horas = [a.hora for a in ocupados]
+
+                # Se houver qualquer slot livre para qualquer barbeiro, retorna True
+                if any(slot not in ocupados_horas for slot in all_slots):
+                    return True
+            return False
+        finally:
+            self.db.close()
+
+    def get_all_barbers(self):
+        """Busca todos os barbeiros cadastrados no banco."""
+        return self.db.query(Barber).all()

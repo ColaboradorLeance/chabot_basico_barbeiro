@@ -18,7 +18,6 @@ class MessageService:
             print(f"🚫 Mensagem duplicada ignorada: {message_id}")
             return
 
-        repo = AppointmentRepository()
         repo.save_message_id(message_id)
         repo = AppointmentRepository()
 
@@ -32,13 +31,14 @@ class MessageService:
 
         current_state, context_data = repo.get_user_state(clean_phone)
         scheduling = SchedulingService()
-        resultado = await scheduling.process_flow(mensagem, current_state, clean_phone)
+        resultado = await scheduling.process_flow(mensagem, current_state, clean_phone, context_data)
 
         # Salva o novo estado
         repo.save({
             "phone": clean_phone,
             "state": resultado.get("next_state"),
-            "last_message": mensagem
+            "last_message": mensagem,
+            "extra": resultado.get("extra", {})
         })
 
     def _extract_message(self, data: dict) -> str:

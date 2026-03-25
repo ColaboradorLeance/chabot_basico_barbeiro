@@ -1,72 +1,109 @@
+from token import AWAIT
+from datetime import datetime, timedelta
 from services.whatsapp_service import WhatsAppService
 import asyncio
+from repositories.appointment_repository import AppointmentRepository
+from core.messages import MSG_START, MSG_OPTION_SERVICE, MSG_SERVICE, ALERTA, MSG_BUSCANDO_AGENDAMENTO, MENSAGEM_AGENDAMENTO_NOT_FOUND, MSG_MEUS_AGENDAMENTOS
+
+
 
 class SchedulingService:
-    async def process_flow(self, mensagem: str, current_state: str, phone: str) -> dict:
+    async def process_flow(self, mensagem: str, current_state: str, phone: str, context_data: str) -> dict:
         msg = mensagem.strip().lower()
         whatsapp_service = WhatsAppService()
 
         if current_state == "START":
             await whatsapp_service.send_media(phone)
+            await whatsapp_service.send_text(phone, MSG_START)
             await asyncio.sleep(1)
-            msg_start = "💈 Barbearia Evolution\nOlá! O que você deseja utilizar hoje?"
-            await whatsapp_service.send_text(phone, msg_start)
-            await asyncio.sleep(1)
-            await whatsapp_service.send_list(phone)
-
+            await whatsapp_service.send_text(phone, MSG_OPTION_SERVICE)
             return {"next_state": "SERVICE"}
 
-        elif current_state == "SERVICO":
-            return {
-                "type": "text",
-                "next_state": "SERVICE",
+        elif current_state == "SERVICE":
+            if mensagem == "1":
+                await whatsapp_service.send_text(phone, MSG_SERVICE)
+                return {"next_state": "CHOOSE_BARBEIRO"}
+            elif mensagem == "2":
+                await whatsapp_service.send_text(phone, MSG_BUSCANDO_AGENDAMENTO)
+                await asyncio.sleep(1)
+                repo = AppointmentRepository()
+                agendamentos = repo.get_appointments(phone)
+                if not agendamentos:
+                    await whatsapp_service.send_text(phone, MENSAGEM_AGENDAMENTO_NOT_FOUND)
+                    await whatsapp_service.send_text(phone, MSG_OPTION_SERVICE)
+                    return {"next_state": "SERVICE"}
+                else:
+                    msg_agendamentos = ""
+                    for ag in agendamentos:
+                        msg_agendamentos += f"✂️ {ag.servico} - {ag.data} às {ag.hora}\n"
 
-            }
+                    msg_agendados = self.build_cancel_menu(agendamentos)
+                    await whatsapp_service.send_text(phone, MSG_BUSCANDO_AGENDAMENTO, msg_agendamentos)
+                    await whatsapp_service.send_text(phone, msg_agendados)
+                    return {"next_state": "VISUALIZACAO_AGENDAMENTO"}
+            else:
+                await whatsapp_service.send_text(phone, ALERTA)
+                await whatsapp_service.send_text(phone, MSG_OPTION_SERVICE)
+                return {"next_state": "SERVICE"}
+
+        elif current_state == "VISUALIZACAO_AGENDAMENTO":
+            pass
+        elif current_state == "CHOOSE_BARBEIRO":
+            if mensagem == "0":
+                await whatsapp_service.send_text(phone, MSG_OPTION_SERVICE)
+                return {"next_state": "SERVICE"}
+            menu_barber = await self.send_barber_menu()
+            await whatsapp_service.send_text(phone, menu_barber)
+            return {"next_state": "CHOOSE_DAY"}
+
+        elif current_state == "CHOOSE_DAY":
+            if mensagem == "0":
+                menu_barber = await self.send_barber_menu()
+                await whatsapp_service.send_text(phone, menu_barber)
+                return {"next_state": "CHOOSE_BARBEIRO"}
+            menu_days, avaliable_days = self.build_available_days_menu()
+            await whatsapp_service.send_text(phone, menu_days)
+            return {"next_state": "CHOOSE_HOUR"}
+
+        elif current_state == "CHOOSE_HOUR":
+            if mensagem == "0":
+                menu_days, avaliable_days = self.build_available_days_menu()
+                await whatsapp_service.send_text(phone, menu_days)
+            await whatsapp_service.send_text(phone, "vai corinthians")
 
 
-        # elif current_state == "DATA":
-        #     if msg == "voltar":
-        #         return self.process_flow("", "START", context_data)
-        #
-        #     return {
-        #         "type": "text",
-        #         "next_state": "HORA",
-        #         "extra_data": {"data": msg, "servico": context_data.get("servico")},
-        #         "content": f"Data: {msg} 📅\n\nQual horário você prefere? (Ex: 14:00) ou digite *voltar*."
-        #     }
-        #
-        # elif current_state == "HORA":
-        #     if msg == "voltar":
-        #         # Finge que o usuário clicou no mesmo serviço para pular direto para a pergunta de data
-        #         servico_reverso = {"Corte de Cabelo": "corte", "Barba": "barba", "Cabelo + Barba": "combo"}
-        #         id_anterior = servico_reverso.get(context_data.get("servico", ""), "corte")
-        #         return self.process_flow(id_anterior, "SERVICO", context_data)
-        #
-        #     hora = msg
-        #     servico = context_data.get("servico")
-        #     data = context_data.get("data")
-        #
-        #     return {
-        #         "type": "button",
-        #         "next_state": "CONFIRMACAO",
-        #         "extra_data": {"hora": hora, "data": data, "servico": servico},
-        #         "content": {
-        #             "text": f"Resumo do Agendamento:\n\n✂️ {servico}\n📅 {data}\n⏰ {hora}\n\nPodemos confirmar?",
-        #             "buttons": [
-        #                 {"id": "btn_sim", "text": "✅ Confirmar"},
-        #                 {"id": "btn_nao", "text": "❌ Cancelar"}
-        #             ]
-        #         }
-        #     }
-        #
-        # elif current_state == "CONFIRMACAO":
-        #     if msg == "btn_sim":
-        #         return {"type": "text", "next_state": "FINALIZADO", "extra_data": {},
-        #                 "content": "Agendamento confirmado com sucesso! 🎉 Te esperamos na hora marcada."}
-        #     elif msg == "btn_nao":
-        #         return self.process_flow("", "START", context_data)
-        #     else:
-        #         return {"type": "text", "next_state": "CONFIRMACAO", "extra_data": context_data,
-        #                 "content": "Por favor, clique em Confirmar ou Cancelar."}
 
-        return self.process_flow("", "START", context_data)
+    def build_cancel_menu(self, agendamentos: list) -> str:
+        menu = "❌ Escolha o agendamento que deseja cancelar:\n\n"
+        for i, ag in enumerate(agendamentos, 1):
+            menu += f"{i}️⃣ {ag.servico} - {ag.data} às {ag.hora}\n"
+
+        menu += "\n🔙 Digite 0️⃣ para voltar ao menu principal."
+        return menu
+
+    def build_available_days_menu(self, days_ahead: int = 7):
+        repo = AppointmentRepository()
+        menu = "📅 Escolha o dia do seu corte:\n\n"
+        today = datetime.today()
+        option_number = 1
+        available_days = []
+
+        for i in range(days_ahead):
+            day = (today + timedelta(days=i)).strftime("%Y-%m-%d")
+            if repo.has_available_slots(day):
+                display_day = (today + timedelta(days=i)).strftime("%d/%m/%Y")
+                menu += f"{option_number}️⃣ {display_day}\n"
+                available_days.append(day)
+                option_number += 1
+
+        menu += "\n🔙 Digite 0️⃣ para voltar ao menu principal."
+        return menu, available_days
+
+    async def send_barber_menu(self):
+        repo = AppointmentRepository()
+        barbers = repo.get_all_barbers()
+        menu = "✂️ Escolha o barbeiro:\n\n"
+        for i, barber in enumerate(barbers, 1):
+            menu += f"{i}️⃣ {barber.nome}\n"
+        menu += "\n🔙 Digite 0️⃣ para voltar ao menu principal."
+        return menu
