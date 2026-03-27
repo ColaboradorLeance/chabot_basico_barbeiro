@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from .database import SessionLocal
 from .models import User, Conversation, ConversationData, ProcessedMessage, Appointment, Barber
+import json
 
 class AppointmentRepository:
     def __init__(self):
@@ -16,9 +17,18 @@ class AppointmentRepository:
             if not conversation:
                 return "START", {}
 
-            # Recupera os dados extras já salvos (ex: serviço escolhido, data)
-            extra_data = {item.key: item.value for item in conversation.data}
-            return conversation.state, extra_data
+
+            extra_data = {}
+            for item in conversation.data:
+                try:
+                    # Tenta converter de JSON para objeto Python (Lista, Dict, Int...)
+                    extra_data[item.key] = json.loads(item.value)
+                except (json.JSONDecodeError, TypeError):
+                    # Se falhar (ex: dados antigos), mantém o valor original
+                    extra_data[item.key] = item.value
+
+            # Retorna no formato esperado pelo seu SchedulingService: {"extra": {...}}
+            return conversation.state, {"extra": extra_data}
         finally:
             self.db.close()
 
@@ -48,15 +58,20 @@ class AppointmentRepository:
 
             extra_data = data.get("extra", {})
             for key, value in extra_data.items():
+
+                # A CORREÇÃO ESTÁ AQUI: Usa json.dumps para garantir aspas duplas e formatação correta
+                json_value = json.dumps(value)
+
                 item = self.db.query(ConversationData).filter(
                     ConversationData.conversation_id == conversation.id,
                     ConversationData.key == key
                 ).first()
                 if item:
-                    item.value = str(value)
+                    item.value = json_value
                 else:
-                    item = ConversationData(conversation_id=conversation.id, key=key, value=str(value))
+                    item = ConversationData(conversation_id=conversation.id, key=key, value=json_value)
                     self.db.add(item)
+
             self.db.commit()
             return {"user_id": user.id, "conversation_id": conversation.id}
         except Exception as e:
@@ -101,12 +116,14 @@ class AppointmentRepository:
         finally:
             self.db.close()
 
-    def has_available_slots(self, day: str) -> bool:
+    def has_available_slots(self, day: str, barber_id: int = None) -> bool:
         try:
             all_slots = [f"{h:02d}:00" for h in range(8, 19)]
-            barbeiros = self.db.query(Barber).all()
+            query = self.db.query(Barber)
+            if barber_id:
+                query = query.filter(Barber.id == barber_id)
 
-            print(f"DEBUG: Barbeiros encontrados no banco: {len(barbeiros)}")  # Adicione isso
+            barbeiros = query.all()
 
             if not barbeiros:
                 return False
@@ -116,15 +133,40 @@ class AppointmentRepository:
                     Appointment.barber_id == barber.id,
                     Appointment.data == day
                 ).all()
-                ocupados_horas = [a.hora for a in ocupados]
 
-                # Se houver qualquer slot livre para qualquer barbeiro, retorna True
+                ocupados_horas = [a.hora for a in ocupados]
+                vagos = [s for s in all_slots if s not in ocupados_horas]
+
                 if any(slot not in ocupados_horas for slot in all_slots):
                     return True
+
             return False
         finally:
-            self.db.close()
+            # CUIDADO: Se você fechar a sessão aqui, o repository pode parar de funcionar
+            # em outras chamadas. Geralmente quem fecha a sessão é o Controller ou o Middleware.
+            pass
 
     def get_all_barbers(self):
-        """Busca todos os barbeiros cadastrados no banco."""
-        return self.db.query(Barber).all()
+        return self.db.query(Barber).order_by(Barber.id.asc()).all()
+
+    def get_available_hours(self, day: str, barber_id: int) -> list:
+        try:
+            all_slots = [f"{h:02d}:00" for h in range(8, 19)]
+
+            # Filtra os agendamentos já existentes
+            ocupados = self.db.query(Appointment).filter(
+                Appointment.barber_id == barber_id,
+                Appointment.data == day
+            ).all()
+
+            ocupados_horas = [a.hora for a in ocupados]
+
+            # Retorna a lista de horas que NÃO estão ocupadas
+            vagos = [slot for slot in all_slots if slot not in ocupados_horas]
+            return vagos
+        finally:
+            pass
+
+
+
+

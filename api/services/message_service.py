@@ -25,20 +25,21 @@ class MessageService:
             repo.save({"phone": clean_phone, "state": "START"})
             whatsapp = WhatsAppService()
             await whatsapp.send_text(clean_phone, "🔄 Fluxo resetado. Mande um 'Oi' para recomeçar.")
-            from repositories.database import reset_database
-            reset_database()
+            from ..main import startup
+            startup()
             return
 
         current_state, context_data = repo.get_user_state(clean_phone)
+        full_context = {"extra": context_data} if not isinstance(context_data, dict) else context_data
         scheduling = SchedulingService()
-        resultado = await scheduling.process_flow(mensagem, current_state, clean_phone, context_data)
+        resultado = await scheduling.process_flow(mensagem, current_state, clean_phone, full_context)
 
-        # Salva o novo estado
+        # 2. Salve o resultado de volta
         repo.save({
             "phone": clean_phone,
             "state": resultado.get("next_state"),
             "last_message": mensagem,
-            "extra": resultado.get("extra", {})
+            "extra": resultado.get("extra")  # Certifique-se que o seu repo.save aceita dict ou converte para JSON
         })
 
     def _extract_message(self, data: dict) -> str:

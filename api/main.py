@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from repositories.database import engine, Base, reset_database
 from repositories.database import SessionLocal
 from repositories.models import Barber
+
 app = FastAPI()
 
 
@@ -22,5 +23,4 @@ def startup():
     db.close()
 
 
-# 4️⃣ Inclui as rotas
 app.include_router(webhook_router)
