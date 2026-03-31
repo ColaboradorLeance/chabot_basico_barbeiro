@@ -113,6 +113,18 @@ class SchedulingService:
                     return {"next_state": "CHOOSE_SERVICE"}
 
                 barbeiros = repo.get_all_barbers()
+                total_opcoes = len(barbeiros)
+
+                index = int(mensagem) - 1
+                if index == total_opcoes:
+                    extra["any_barber"] = True
+
+                    menu_days, available_days = self.build_available_days_menu_any_barber()
+
+                    extra["available_days"] = available_days
+
+                    await whatsapp_service.send_text(phone, menu_days)
+                    return {"next_state": "CHOOSE_DAY", "extra": extra}
                 try:
                     index = int(mensagem) - 1
                     if 0 <= index < len(barbeiros):
@@ -129,7 +141,6 @@ class SchedulingService:
                     pass
                 return {"next_state": "CHOOSE_BARBEIRO"}
 
-            # --- ESCOLHA DO DIA ---
             elif current_state == "CHOOSE_DAY":
                 if mensagem == "0":
                     menu_barber = await self.send_barber_menu()
@@ -141,8 +152,13 @@ class SchedulingService:
                     index = int(mensagem) - 1
                     if 0 <= index < len(available_days):
                         data_escolhida = available_days[index]
-                        menu_hours, available_hours = self.build_available_hours_menu(data_escolhida,
-                                                                                      extra["id_barber"])
+                        if extra.get("any_barber"):
+                            menu_hours, available_hours = self.build_available_hours_menu_any_barber(data_escolhida)
+                        else:
+                            menu_hours, available_hours = self.build_available_hours_menu(
+                                data_escolhida,
+                                extra["id_barber"]
+                            )
 
                         extra["chosen_day"] = data_escolhida
                         extra["available_hours"] = available_hours
@@ -156,7 +172,10 @@ class SchedulingService:
             # --- ESCOLHA DA HORA ---
             elif current_state == "CHOOSE_HOUR":
                 if mensagem == "0":
-                    menu_days, _ = self.build_available_days_menu(extra["id_barber"])
+                    if extra.get("any_barber"):
+                        menu_days, _ = self.build_available_days_menu_any_barber()
+                    else:
+                        menu_days, _ = self.build_available_days_menu(extra["id_barber"])
                     await whatsapp_service.send_text(phone, menu_days)
                     return {"next_state": "CHOOSE_DAY", "extra": extra}
 
@@ -173,10 +192,11 @@ class SchedulingService:
                         except:
                             data_formatada = extra.get('chosen_day')
 
+                        barber_display = extra.get('barber_name') or "A definir"
                         resumo = (
                             f"📝 *Resumo do Agendamento*\n\n"
                             f"✂️ Serviço: {extra.get('servico_nome')}\n"
-                            f"👤 Barbeiro: {extra.get('barber_name')}\n"
+                            f"👤 Barbeiro: {barber_display}\n"
                             f"📅 Data: {data_formatada}\n"
                             f"⏰ Hora: {hora_escolhida}\n\n"
                             "Para finalizar, digite seu *Email*:"
@@ -227,28 +247,40 @@ class SchedulingService:
 
                 return {"next_state": "CONFIRM_EMAIL", "extra": extra}
 
+
             elif current_state == "FINALIZE":
                 email_cliente = extra.get("email_digitado")
                 data_escolhida = extra.get('chosen_day')
                 hora_escolhida = extra.get('chosen_hour')
                 servico = extra.get('servico_nome', 'Serviço')
-                barbeiro = extra.get('barber_name', 'Barbeiro')
+                if extra.get("any_barber"):
+                    barbeiro_obj = repo.get_random_available_barber(
+                        data_escolhida,
+                        hora_escolhida
+                    )
 
+                    if not barbeiro_obj:
+                        await whatsapp_service.send_text(
+                            phone,
+                            "❌ Ops! Esse horário acabou de ser ocupado. Tente outro 🙏"
+                        )
+
+                        return {"next_state": "START", "extra": {}}
+                    extra["id_barber"] = barbeiro_obj.id
+                    extra["barber_name"] = barbeiro_obj.nome
+                barbeiro = extra.get('barber_name', 'Barbeiro')
                 await whatsapp_service.send_text(phone, "⏳ Gerando seu convite na agenda, um momento...")
 
                 try:
-                    # Importação LOCAL para não derrubar o app no boot
                     from .schedule_event import GoogleCalendarService
                     calendar = GoogleCalendarService()
-
                     start_dt = datetime.strptime(f"{data_escolhida} {hora_escolhida}", "%Y-%m-%d %H:%M")
                     data_formatada = start_dt.strftime("%d/%m/%Y")
                     hora_formatada = start_dt.strftime("%H:%M")
                     end_dt = start_dt + timedelta(hours=1)
                     start_iso = start_dt.strftime("%Y-%m-%dT%H:%M:00-03:00")
                     end_iso = end_dt.strftime("%Y-%m-%dT%H:%M:00-03:00")
-
-                    link_invite = await asyncio.to_thread(
+                    await asyncio.to_thread(
                         calendar.create_event,
                         nameEvent=f"Corte: {servico} com {barbeiro}",
                         descriptionEvent=f"Agendamento confirmado para {servico}.",
@@ -265,8 +297,9 @@ class SchedulingService:
                         f"📅 Data: {data_formatada}\n"
                         f"⏰ Hora: {hora_formatada}\n\n"
                         f"📧 Convite enviado para: {email_cliente}\n\n"
-                        "O cliente receberá o convite no email informado e poderá adicioná-lo ao próprio calendário. Até logo! 💈"
+                        "Até logo! 💈"
                     )
+
                     repo.create_appointment(
                         barber_id=extra.get("id_barber"),
                         data=data_escolhida,
@@ -280,11 +313,8 @@ class SchedulingService:
                     print(f"❌ ERRO CALENDAR: {str(e)}")
                     await whatsapp_service.send_text(phone, "⚠️ Reservado! Mas tive um erro ao gerar o link da agenda.")
                     return {"next_state": "START", "extra": {}}
-
             return {"next_state": current_state, "extra": extra}
-
         finally:
-            # 🛑 FECHA A CONEXÃO PRINCIPAL AQUI
             repo.close()
 
     def build_available_days_menu(self, id_barber: int):
@@ -339,8 +369,11 @@ class SchedulingService:
         try:
             barbers = repo.get_all_barbers()
             menu = "✂️ Escolha o barbeiro:\n\n"
+
             for i, b in enumerate(barbers, 1):
                 menu += f"{i}️⃣ {b.nome}\n"
+            menu += f"{len(barbers) + 1}️⃣ Qualquer barbeiro disponível\n"
+
             menu += "\n🔙 Digite 0️⃣ para voltar."
             return menu
         finally:
@@ -362,3 +395,40 @@ class SchedulingService:
             )
         menu += "Digite o número para cancelar ou 0️⃣ para voltar."
         return menu
+
+    def build_available_days_menu_any_barber(self):
+        repo = AppointmentRepository()
+        try:
+            menu = "📅 Escolha o dia:\n\n"
+            today = datetime.today()
+            available_days = []
+            option = 1
+
+            for i in range(7):
+                current_date = today + timedelta(days=i)
+                day_str = current_date.strftime("%Y-%m-%d")
+
+                # 👉 verifica se QUALQUER barbeiro tem vaga
+                if repo.has_available_slots_any_barber(day_str):
+                    menu += f"{option}️⃣ {current_date.strftime('%d/%m (%A)')}\n"
+                    available_days.append(day_str)
+                    option += 1
+
+            menu += "\n🔙 Digite 0️⃣ para voltar."
+            return menu, available_days
+        finally:
+            repo.close()
+
+    def build_available_hours_menu_any_barber(self, day_str):
+        repo = AppointmentRepository()
+        try:
+            horas = repo.get_available_hours_any_barber(day_str)
+
+            menu = f"⏰ Horários disponíveis:\n\n"
+            for i, h in enumerate(horas, 1):
+                menu += f"{i}️⃣ {h}\n"
+
+            menu += "\n🔙 Digite 0️⃣ para voltar."
+            return menu, horas
+        finally:
+            repo.close()

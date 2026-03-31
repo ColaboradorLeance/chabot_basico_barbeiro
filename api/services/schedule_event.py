@@ -6,9 +6,6 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-# Arquivos gerados pelo processo de autorização
-# services/schedule_event.py está em api/services/
-# os arquivos de credenciais ficam em api/core/
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))   # api/services/
 CORE_DIR  = os.path.join(os.path.dirname(BASE_DIR), "core")  # api/core/
 TOKEN_FILE         = os.getenv("GOOGLE_TOKEN_PATH",         os.path.join(CORE_DIR, "token.json"))

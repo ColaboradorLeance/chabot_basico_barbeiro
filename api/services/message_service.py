@@ -47,7 +47,7 @@ class MessageService:
                 "phone": clean_phone,
                 "state": resultado.get("next_state"),
                 "last_message": mensagem,
-                "extra": resultado.get("extra")
+                "extra": resultado.get("extra", {})
             })
 
         finally:

@@ -1,17 +1,53 @@
-# repositories/appointment_repository.py
+import json
+import random
+import pytz
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+
 from .database import SessionLocal
 from .models import User, Conversation, ConversationData, ProcessedMessage, Appointment, Barber
-import json
+
 
 class AppointmentRepository:
     _user_processing = {}
+
     def __init__(self):
         self.db: Session = SessionLocal()
+        # Define o fuso horário de São Paulo centralizado para toda a classe
+        self.tz = pytz.timezone("America/Sao_Paulo")
+
+    def _get_now(self):
+        """Retorna o datetime atual no fuso horário de São Paulo."""
+        return datetime.now(self.tz)
+
+    def _is_today(self, day: str) -> bool:
+        try:
+            return datetime.strptime(day, "%Y-%m-%d").date() == self._get_now().date()
+        except:
+            return False
+
+    def _is_future_time(self, day: str, hour: str, min_minutes: int = 0) -> bool:
+        """Verifica se o horário agendado é no futuro em relação ao horário de São Paulo."""
+        try:
+            dt_naive = datetime.strptime(f"{day} {hour}", "%Y-%m-%d %H:%M")
+            dt_aware = self.tz.localize(dt_naive)
+            limite = self._get_now() + timedelta(minutes=min_minutes)
+            return dt_aware > limite
+        except Exception as e:
+            print(f"Erro na validação de horário: {e}")
+            return False
 
     def close(self):
         if self.db:
             self.db.close()
+
+    def get_available_days(self, num_days=6):
+        hoje = self._get_now().date()
+        dias = []
+        for i in range(num_days):
+            dia = hoje + timedelta(days=i)
+            dias.append(dia.strftime("%Y-%m-%d"))
+        return dias
 
     def set_user_processing(self, phone: str, status: bool):
         if status:
@@ -140,19 +176,23 @@ class AppointmentRepository:
 
     def has_available_slots(self, day: str, barber_id: int = None) -> bool:
         all_slots = [f"{h:02d}:00" for h in range(8, 19)]
+
+        valid_slots = [h for h in all_slots if self._is_future_time(day, h)]
+        if not valid_slots:
+            return False
+
         query = self.db.query(Barber)
         if barber_id:
             query = query.filter(Barber.id == barber_id)
+
         barbeiros = query.all()
-        if not barbeiros:
-            return False
         for barber in barbeiros:
             ocupados = self.db.query(Appointment).filter(
                 Appointment.barber_id == barber.id,
                 Appointment.data == day
             ).all()
             ocupados_horas = [a.hora for a in ocupados]
-            if any(slot not in ocupados_horas for slot in all_slots):
+            if any(slot not in ocupados_horas for slot in valid_slots):
                 return True
         return False
 
@@ -166,4 +206,66 @@ class AppointmentRepository:
             Appointment.data == day
         ).all()
         ocupados_horas = [a.hora for a in ocupados]
-        return [slot for slot in all_slots if slot not in ocupados_horas]
+
+        livres = [slot for slot in all_slots if slot not in ocupados_horas]
+        # Aplica a validação de horário futuro com o timezone correto
+        livres = [h for h in livres if self._is_future_time(day, h)]
+        return livres
+
+    def has_available_slots_any_barber(self, day: str) -> bool:
+        all_slots = [f"{h:02d}:00" for h in range(8, 19)]
+        valid_slots = [h for h in all_slots if self._is_future_time(day, h)]
+        if not valid_slots:
+            return False
+
+        barbeiros = self.get_all_barbers()
+        for barber in barbeiros:
+            ocupados = self.db.query(Appointment).filter(
+                Appointment.barber_id == barber.id,
+                Appointment.data == day
+            ).all()
+            ocupados_horas = [a.hora for a in ocupados]
+            if any(slot not in ocupados_horas for slot in valid_slots):
+                return True
+        return False
+
+    def get_available_hours_any_barber(self, day: str) -> list:
+        all_slots = [f"{h:02d}:00" for h in range(8, 19)]
+        horarios_disponiveis = []
+        for slot in all_slots:
+            barbeiros = self.get_all_barbers()
+            for barber in barbeiros:
+                ocupado = self.db.query(Appointment).filter(
+                    Appointment.barber_id == barber.id,
+                    Appointment.data == day,
+                    Appointment.hora == slot
+                ).first()
+                if not ocupado:
+                    horarios_disponiveis.append(slot)
+                    break
+
+        horarios_disponiveis = [
+            h for h in horarios_disponiveis
+            if self._is_future_time(day, h)
+        ]
+
+        return horarios_disponiveis
+
+    def get_random_available_barber(self, day: str, hour: str):
+        barbeiros = self.get_all_barbers()
+        disponiveis = []
+
+        for barber in barbeiros:
+            ocupado = self.db.query(Appointment).filter(
+                Appointment.barber_id == barber.id,
+                Appointment.data == day,
+                Appointment.hora == hour
+            ).first()
+
+            if not ocupado:
+                disponiveis.append(barber)
+
+        if not disponiveis:
+            return None
+
+        return random.choice(disponiveis)
